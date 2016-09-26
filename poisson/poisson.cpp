@@ -6,6 +6,9 @@
 #include <boost/gil/extension/io/png_io.hpp>
 using namespace boost::gil;
 
+#include "..\gil_utils\color_arithm.h"
+#include "..\gil_utils\float_views_io.h"
+
 // копирование пикселов маски из from в to
 template <typename M, typename V, typename VT>
 void clone(const M & mask, const V & from, const VT & to)
@@ -23,23 +26,6 @@ void clone(const M & mask, const V & from, const VT & to)
   }
 }
 
-// арифметические операции с пикселами (отдельно в каждом канале)
-inline rgb32f_pixel_t operator + (rgb32f_pixel_t a, const rgb32f_pixel_t & b)
-{
-  get_color(a, red_t()) += get_color(b, red_t());
-  get_color(a, green_t()) += get_color(b, green_t());
-  get_color(a, blue_t()) += get_color(b, blue_t());
-  return a;
-}
-
-inline rgb32f_pixel_t operator - (rgb32f_pixel_t a, const rgb32f_pixel_t & b)
-{
-  get_color(a, red_t()) -= get_color(b, red_t());
-  get_color(a, green_t()) -= get_color(b, green_t());
-  get_color(a, blue_t()) -= get_color(b, blue_t());
-  return a;
-}
-
 inline float absmax(float a, float b)
 {
   return fabs(a) >= fabs(b) ? a : b;
@@ -51,14 +37,6 @@ inline rgb32f_pixel_t absmax(rgb32f_pixel_t a, const rgb32f_pixel_t & b)
   get_color(a, green_t()) = absmax(get_color(a, green_t()), get_color(b, green_t()));
   get_color(a, blue_t()) = absmax(get_color(a, blue_t()), get_color(b, blue_t()));
   return a;
-}
-
-inline rgb32f_pixel_t operator * (float a, rgb32f_pixel_t b)
-{
-  get_color(b, red_t()) *= a;
-  get_color(b, green_t()) *= a;
-  get_color(b, blue_t()) *= a;
-  return b;
 }
 
 // запоминает смещения до четырех соседних пикселов
@@ -201,16 +179,6 @@ void erode(const M & mask)
       p = 0;
 }
 
-// запись картинки с пикселами в представлении с плавающей точкой в PNG-формат
-// значения меньше 0 записываются как минимальная интесивность 0
-// значения больше 1 записываются как максимальная интесивность 255
-template <typename View>
-inline void png_write_float_view(const char* filename, const View& view)
-{
-  png_write_view(filename, color_converted_view<rgb8_pixel_t>(view,
-    [](const auto & src, auto & dst) { static_for_each(src, dst, [](auto f, auto & i) { i = (f < 0) ? 0 : (f > 1 ? 255 : int(f*255.5f)); }); }));
-}
-
 // функтор, который возвращает (0,0,0) для любой точки
 struct zero
 {
@@ -223,21 +191,17 @@ struct zero
 
 void main()
 {
-  // считываем объект и переводи его в представление с плавающей точкой
-  rgb8_image_t fore;
-  png_read_image("fore.png", fore);
-  rgb32f_image_t foref(fore.dimensions());
-  copy_pixels(color_converted_view<rgb32f_pixel_t>(const_view(fore)), view(foref));
+  // считываем объект
+  rgb32f_image_t foref;
+  png_read_float_image("fore.png", foref);
 
-  // считываем фон и переводи его в представление с плавающей точкой
-  rgb8_image_t back;
-  png_read_image("back.png", back);
-  rgb32f_image_t backf(back.dimensions());
-  copy_pixels(color_converted_view<rgb32f_pixel_t>(const_view(back)), view(backf));
+  // считываем фон
+  rgb32f_image_t backf;
+  png_read_float_image("back.png", backf);
 
   //определям маску как не-черные точки объекта
-  gray8_image_t mask(fore.dimensions());
-  copy_pixels(color_converted_view<gray8_pixel_t>(const_view(fore), 
+  gray8_image_t mask(foref.dimensions());
+  copy_pixels(color_converted_view<gray8_pixel_t>(const_view(foref), 
     [](const auto & src, auto & dst) { dst = (get_color(src, red_t()) != 0 || get_color(src, green_t()) != 0 || get_color(src, blue_t())) != 0 ? 1 : 0; }), view(mask));
   //уменьшаем маску на 1 пиксель со всех сторон, чтобы можно было посчитать градиент объекта во всех точках маски
   erode(view(mask));
