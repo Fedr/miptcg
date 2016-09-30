@@ -33,7 +33,7 @@ void fill_all_borders(const V & view, int brd)
 
 // делает свертку входного изображения по строкам с заданным фильтром, помещая его центр 
 // в точки, находящиеся к любой из 4-х сторон не ближе, чем brd;
-// делает шаг 2 по X и шаг 1 по Y;
+// во входном изображении шагает на 2 пиксела по X
 // shift - значение, добавляемое к результирующим писелам, для того чтобы 0 в высокачастотном фильтре выглядел серым
 template <typename VI, typename VO>
 void convolve_downsample_x(const VI & in, int brdX, int brdY, const VO & out, const std::vector<float> & filter, float shift)
@@ -61,26 +61,27 @@ void convolve_downsample_x(const VI & in, int brdX, int brdY, const VO & out, co
   }
 }
 
-// делает свертку входного изображения по столбцам с заданным фильтром, помещая его центр 
-// в точки, находящиеся к любой из 4-х сторон не ближе, чем brd;
-// делает шаг 1 по X и шаг 2 по Y
+// аналог для сертки по столбцам
 template <typename VI, typename VO>
 void convolve_downsample_y(const VI & in, int brdX, int brdY, const VO & out, const std::vector<float> & filter, float shift)
 {
   convolve_downsample_x(transposed_view(in), brdY, brdX, transposed_view(out), filter, shift);
 }
 
+// один уровень вейвлет разложения
 template <typename VI, typename VO>
 void wavelet_transform1(const VI & in, const VO & out, const std::vector<float> & low_pass, const std::vector<float> & hi_pass)
 {
   if (in.dimensions() != out.dimensions())
     throw std::runtime_error("input and output images shall have the same dimensions in wavelet_transform");
 
+  // копия входного изображения с дополнительными краями, чтобы фильтры не выходили за пределы
   int brd = std::max(low_pass.size(), hi_pass.size()) / 2;
   rgb32f_image_t extended_in(in.width() + 2 * brd, in.height() + 2 * brd);
   copy_pixels(in, subimage_view(view(extended_in), { brd, brd }, in.dimensions()));
   fill_all_borders(view(extended_in), brd);
 
+  // разложение по X
   rgb32f_image_t filtered_x(in.width() + 2 * brd, in.height() + 2 * brd);
   convolve_downsample_x(view(extended_in), brd, brd,
     subimage_view(view(filtered_x), { brd, brd }, { in.width() / 2, in.height() }), low_pass, 0);
@@ -88,15 +89,14 @@ void wavelet_transform1(const VI & in, const VO & out, const std::vector<float> 
     subimage_view(view(filtered_x), { brd + in.width() / 2, brd }, { in.width() / 2, in.height() }), hi_pass, 0.5f);
   fill_all_borders(view(filtered_x), brd);
 
-//  png_write_float_view("filtered_x.png", 
-//    subimage_view(const_view(filtered_x), { brd, brd }, out.dimensions()));
-
+  // разложение по Y
   convolve_downsample_y(view(filtered_x), brd, brd,
     subimage_view(out, { 0, 0 }, { in.width(), in.height() / 2 }), low_pass, 0);
   convolve_downsample_y(view(filtered_x), brd, brd,
     subimage_view(out, { 0, in.height() / 2 }, { in.width(), in.height() / 2 }), hi_pass, 0.5f);
 }
 
+// вейвлет разложение с заданным числом уровней
 template <typename VI, typename VO>
 void wavelet_transform(int levels, const VI & in, const VO & out, const std::vector<float> & low_pass, const std::vector<float> & hi_pass)
 {
@@ -115,6 +115,10 @@ void wavelet_transform(int levels, const VI & in, const VO & out, const std::vec
   wavelet_transform(levels-1, view(tmp), low_freq_out, low_pass, hi_pass);
 }
 
+// делает свертку входного изображения по строкам с заданным фильтром;
+// результат записывается в выходное изобрадение с отсутпом brd от границ;
+// в выходном изображении шагает на 2 пиксела по X;
+// shift - значение, вычитаемое из входных пикселов, чтобы принимать серый цвет в качестве 0 для высоких частот
 template <typename VI, typename VO>
 void convolve_upsample_x(const VI & in, int brdX, int brdY, const VO & out, const std::vector<float> & filter, float shift)
 {
@@ -140,20 +144,23 @@ void convolve_upsample_x(const VI & in, int brdX, int brdY, const VO & out, cons
   }
 }
 
+// аналог для сертки по столбцам
 template <typename VI, typename VO>
 void convolve_upsample_y(const VI & in, int brdX, int brdY, const VO & out, const std::vector<float> & filter, float shift)
 {
   convolve_upsample_x(transposed_view(in), brdY, brdX, transposed_view(out), filter, shift);
 }
 
+// один уровень обратного вейвлет разложения
 template <typename VI, typename VO>
-void wavelet_inv_transform1(const VI & in, const VO & out, const std::vector<float> & low_pass, const std::vector<float> & hi_pass)
+void inverse_transform1(const VI & in, const VO & out, const std::vector<float> & low_pass, const std::vector<float> & hi_pass)
 {
   if (in.dimensions() != out.dimensions())
-    throw std::runtime_error("input and output images shall have the same dimensions in wavelet_inv_transform");
+    throw std::runtime_error("input and output images shall have the same dimensions in inverse_transform");
   auto half_width = out.width() / 2;
   auto half_height = out.height() / 2;
 
+  // обратное преобразование по Y
   int brd = std::max(low_pass.size(), hi_pass.size()) / 2;
   rgb32f_image_t inverted_y(in.width(), in.height() + 2 * brd);
   fill_pixels(view(inverted_y), rgb32f_pixel_t(0, 0, 0));
@@ -162,9 +169,7 @@ void wavelet_inv_transform1(const VI & in, const VO & out, const std::vector<flo
   convolve_upsample_y(subimage_view(in, { 0, half_height }, { in.width(), half_height }),
     0, brd, view(inverted_y), hi_pass, 0.5f);
 
-//  png_write_float_view("inverted_y.png", 
-//    subimage_view(const_view(inverted_y), { 0, brd }, out.dimensions()));
-
+  // обратное преобразование по X
   rgb32f_image_t inverted_x(in.width() + 2 * brd, in.height());
   fill_pixels(view(inverted_x), rgb32f_pixel_t(0, 0, 0));
   convolve_upsample_x(subimage_view(const_view(inverted_y), { 0, brd }, { half_width, in.height() }),
@@ -172,7 +177,52 @@ void wavelet_inv_transform1(const VI & in, const VO & out, const std::vector<flo
   convolve_upsample_x(subimage_view(const_view(inverted_y), { half_width, brd }, { half_width, in.height() }),
     brd, 0, view(inverted_x), hi_pass, 0.5f);
 
+  // копирование результата без границ
   copy_pixels(subimage_view(const_view(inverted_x), { brd, 0 }, out.dimensions()), out);
+}
+
+// обратное вейвлет разложение с заданным числом уровней
+template <typename VI, typename VO>
+void inverse_transform(int levels, const VI & in, const VO & out, const std::vector<float> & low_pass, const std::vector<float> & hi_pass)
+{
+  if (levels < 1)
+    throw std::runtime_error("at least 1 level of transform is required");
+
+  if (levels == 1)
+  {
+    inverse_transform1(in, out, low_pass, hi_pass);
+    return;
+  }
+
+  point2<ptrdiff_t> half_dim(out.width() / 2, out.height() / 2);
+
+  rgb32f_image_t tmp(in.dimensions());
+  copy_pixels(in, view(tmp));
+  inverse_transform(levels - 1, subimage_view(in, { 0, 0 }, half_dim), subimage_view(view(tmp), { 0, 0 }, half_dim), low_pass, hi_pass);
+
+  inverse_transform1(view(tmp), out, low_pass, hi_pass);
+}
+
+// демонстрация прямого и обратного вейвлет преобразований с записью результатов в файлы
+template <typename V>
+void demo_transform(const V & img, const std::string & name, 
+  const std::vector<float> & low_pass_synthesis, const std::vector<float> & hi_pass_synthesis)
+{
+  // фильтры отличаются на множетель 2, чтобы низкие частоты прямого преобразования выглядели как усреднение
+  auto low_pass_analysis = low_pass_synthesis;
+  for (auto & v : low_pass_analysis)
+    v /= 2;
+  auto hi_pass_analysis = hi_pass_synthesis;
+  for (auto & v : hi_pass_analysis)
+    v /= 2;
+
+  rgb32f_image_t transformed(img.dimensions());
+  wavelet_transform(3, img, view(transformed), low_pass_analysis, hi_pass_analysis);
+  png_write_float_view(("transformed-" + name + ".png").c_str(), const_view(transformed));
+
+  rgb32f_image_t restored(img.dimensions());
+  inverse_transform(3, const_view(transformed), view(restored), low_pass_synthesis, hi_pass_synthesis);
+  png_write_float_view(("restored-" + name + ".png").c_str(), const_view(restored));
 }
 
 void main()
@@ -181,34 +231,22 @@ void main()
   rgb32f_image_t img;
   png_read_float_image("lena.png", img);
 
-  rgb32f_image_t transformed(img.dimensions());
-  rgb32f_image_t restored(img.dimensions());
+  // https://en.wikipedia.org/wiki/Daubechies_wavelet
+  demo_transform(const_view(img), "D2", { 1, 1 }, { 1, -1 }); //Haar
 
-  //Haar (D2) - works well
-  wavelet_transform1(const_view(img), view(transformed), { 0.5f, 0.5f }, { 0.5f, -0.5f });
-  png_write_float_view("haar.png", const_view(transformed));
+  demo_transform(const_view(img), "D4", 
+    { 0.6830127f, 1.1830127f, 0.3169873f, -0.1830127f }, 
+    { -0.1830127f, -0.3169873f, 1.1830127f, -0.6830127f });
 
-  wavelet_inv_transform1(const_view(transformed), view(restored), { 1, 1 }, { 1, -1 });
-  png_write_float_view("haar-restored.png", const_view(restored));
-
-  //D4 - works well
-  wavelet_transform1(const_view(img), view(transformed), { 0.6830127f / 2, 	1.1830127f / 2, 0.3169873f / 2, -0.1830127f / 2 }, { -0.1830127f / 2, -0.3169873f / 2, 1.1830127f / 2, -0.6830127f / 2 });
-  png_write_float_view("D4.png", const_view(transformed));
-
-  wavelet_inv_transform1(const_view(transformed), view(restored), { 0.6830127f, 1.1830127f, 0.3169873f, -0.1830127f }, { -0.1830127f, -0.3169873f, 1.1830127f, -0.6830127f });
-  png_write_float_view("D4-restored.png", const_view(restored));
+  demo_transform(const_view(img), "D6",
+    { 0.47046721f, 1.14111692f, 0.650365f, -0.19093442f, -0.12083221f, 0.0498175f },
+    { 0.0498175f, 0.12083221f, -0.19093442f, -0.650365f, 1.14111692f, -0.47046721f });
 
   // LeGall - something wrong with hi-freqs restoration
 /*
   wavelet_transform1(const_view(img), view(transformed), { -0.125f, 0.25f, 0.75f, 0.25f, -0.125f }, { -0.5f, 1.0f, -0.5f });
   png_write_float_view("legall.png", const_view(transformed));
 
-  wavelet_inv_transform1(const_view(transformed), view(restored), { 0.5f, 1.0f, 0.5f }, { -0.125f, -0.25f, 0.75f, -0.25f, -0.125f });
+  inverse_transform1(const_view(transformed), view(restored), { 0.5f, 1.0f, 0.5f }, { -0.125f, -0.25f, 0.75f, -0.25f, -0.125f });
   png_write_float_view("restored-legall.png", const_view(restored));*/
-
-/*  wavelet_transform(3, const_view(img), view(transformed), { 0.5f, 0.5f }, { 0.5f, -0.5f });
-  png_write_float_view("haar.png", const_view(transformed));
-
-  wavelet_transform(3, const_view(img), view(transformed), { -0.125f, 0.25f, 0.75f, 0.25f, -0.125f }, { -0.5f, 1.0f, -0.5f });
-  png_write_float_view("legall.png", const_view(transformed));*/
 }
