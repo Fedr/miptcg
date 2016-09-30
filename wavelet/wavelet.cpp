@@ -201,7 +201,7 @@ void demo_orthogonal_transform(const V & img, const std::string & name,
   for (size_t i = 1; i < hi_pass_synthesis.size(); i += 2)
     hi_pass_synthesis[i] = -hi_pass_synthesis[i];
 
-  // фильтры для анализа и ситнеза отличаются на множетель 2, чтобы низкие частоты прямого преобразования выглядели как усреднение
+  // фильтры для анализа и синтеза отличаются на множитель 2, чтобы низкие частоты прямого преобразования выглядели как усреднение
   auto low_pass_analysis = low_pass_synthesis;
   for (auto & v : low_pass_analysis)
     v /= 2;
