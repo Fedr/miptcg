@@ -5,55 +5,56 @@ using namespace boost::gil;
 #include "..\gil_utils\color_arithm.h"
 #include "..\gil_utils\float_views_io.h"
 
-// заполняет в каждой строке писелы [0,x0), копируя их с зеркальной симметрией из пикселов [x0,...)
-template <typename V>
-void fill_left_border(const V & view, int x0)
+// итератор, подобный I, но который при достижении конца перескакивает на начало
+template <typename I>
+class cycle_iterator
 {
-  if (2 * x0 > view.width())
-    throw std::runtime_error("too narrow view given in fill_left_border");
-  for (int y = 0; y < view.height(); ++y)
+  I begin_, end_, curr_;
+public:
+  cycle_iterator(I begin, I end, I curr) : begin_(begin), end_(end), curr_(curr) { assert (curr_ != end_);  }
+  auto operator *() const -> decltype(*curr_) { return *curr_; }
+  cycle_iterator & operator ++()
   {
-    const auto row = view.row_begin(y);
-    for (int x = 0; x < x0; ++x)
-      *(row + x) = *(row + 2 * x0 - x - 1);
+    if (++curr_ == end_)
+      curr_ = begin_;
+    return *this;
   }
-}
+  cycle_iterator operator ++(int)
+  {
+    cycle_iterator tmp = *this;
+    ++*this;
+    return tmp;
+  }
+};
 
-// заполняет в каждой строке первые brd-пикселов и последние brd-пикселов, копируя их с зеркальной симметрией их пикселов плиже к центру;
-// то же делает и в каждом столбце;
-// значения пикселов в углах изображения размером brd x brd меняется на неопределенное
-template <typename V>
-void fill_all_borders(const V & view, int brd)
+template <typename I>
+inline cycle_iterator<I> create_cycle_iterator(I begin, I end, I curr)
 {
-  fill_left_border(view, brd);
-  fill_left_border(rotated180_view(view), brd);
-  fill_left_border(rotated90cw_view(view), brd);
-  fill_left_border(rotated90ccw_view(view), brd);
+  return cycle_iterator<I>(begin, end, curr);
 }
 
-// делает свертку входного изображения по строкам с заданным фильтром, помещая его центр 
-// в точки, находящиеся к любой из 4-х сторон не ближе, чем brd;
+// делает свертку входного изображения по строкам с заданным фильтром;
 // во входном изображении шагает на 2 пиксела по X
 // shift - значение, добавляемое к результирующим писелам, для того чтобы 0 в высокачастотном фильтре выглядел серым
 template <typename VI, typename VO>
-void convolve_downsample_x(const VI & in, int brdX, int brdY, const VO & out, const std::vector<float> & filter, float shift)
+void convolve_downsample_x(const VI & in, const VO & out, const std::vector<float> & filter, float shift)
 {
-  if (brdX < (int)filter.size()/2)
-    throw std::runtime_error("too narrow border in convolve_downsample_x");
-  if (in.width()/2 - brdX != out.width())
-    throw std::runtime_error("half of input image width minus borders at both sides is not equal to output image width");
-  if (in.height() - 2 * brdY != out.height())
-    throw std::runtime_error("input image height minus borders at both sides is not equal to output image height");
+  if (in.width()/2 != out.width())
+    throw std::runtime_error("half of input image width is not equal to output image width");
+  if (in.height() != out.height())
+    throw std::runtime_error("input image height is not equal to output image height");
 
+  auto step_back = (filter.size() - 1) / 2;
   for (int y = 0; y < out.height(); ++y)
   {
-    auto i = in.row_begin(y+brdY) + brdX;
-    auto iEnd = in.row_end(y + brdY) - brdX;
+    auto i = in.row_begin(y);
+    auto i_end = in.row_end(y);
+    auto is = create_cycle_iterator(i, i_end, step_back > 0 ? i_end - step_back : i);
     auto o = out.row_begin(y);
-    for (; i < iEnd; i += 2, ++o)
+    for (; i < i_end; ++++i, ++++is, ++o)
     {
       rgb32f_pixel_t sum(shift, shift, shift);
-      auto ii = i - (filter.size() - 1) / 2;
+      auto ii = is;
       for (auto f : filter)
         sum += f * *ii++;
       *o = sum;
@@ -63,9 +64,9 @@ void convolve_downsample_x(const VI & in, int brdX, int brdY, const VO & out, co
 
 // аналог для сертки по столбцам
 template <typename VI, typename VO>
-void convolve_downsample_y(const VI & in, int brdX, int brdY, const VO & out, const std::vector<float> & filter, float shift)
+void convolve_downsample_y(const VI & in, const VO & out, const std::vector<float> & filter, float shift)
 {
-  convolve_downsample_x(transposed_view(in), brdY, brdX, transposed_view(out), filter, shift);
+  convolve_downsample_x(transposed_view(in), transposed_view(out), filter, shift);
 }
 
 // один уровень вейвлет разложения
@@ -75,24 +76,17 @@ void wavelet_transform1(const VI & in, const VO & out, const std::vector<float> 
   if (in.dimensions() != out.dimensions())
     throw std::runtime_error("input and output images shall have the same dimensions in wavelet_transform");
 
-  // копия входного изображения с дополнительными краями, чтобы фильтры не выходили за пределы
-  int brd = std::max(low_pass.size(), hi_pass.size()) / 2;
-  rgb32f_image_t extended_in(in.width() + 2 * brd, in.height() + 2 * brd);
-  copy_pixels(in, subimage_view(view(extended_in), { brd, brd }, in.dimensions()));
-  fill_all_borders(view(extended_in), brd);
-
   // разложение по X
-  rgb32f_image_t filtered_x(in.width() + 2 * brd, in.height() + 2 * brd);
-  convolve_downsample_x(view(extended_in), brd, brd,
-    subimage_view(view(filtered_x), { brd, brd }, { in.width() / 2, in.height() }), low_pass, 0);
-  convolve_downsample_x(view(extended_in), brd, brd,
-    subimage_view(view(filtered_x), { brd + in.width() / 2, brd }, { in.width() / 2, in.height() }), hi_pass, 0.5f);
-  fill_all_borders(view(filtered_x), brd);
+  rgb32f_image_t filtered_x(in.width(), in.height());
+  convolve_downsample_x(in,
+    subimage_view(view(filtered_x), { 0, 0 }, { in.width() / 2, in.height() }), low_pass, 0);
+  convolve_downsample_x(in,
+    subimage_view(view(filtered_x), { in.width() / 2, 0 }, { in.width() / 2, in.height() }), hi_pass, 0.5f);
 
   // разложение по Y
-  convolve_downsample_y(view(filtered_x), brd, brd,
+  convolve_downsample_y(view(filtered_x),
     subimage_view(out, { 0, 0 }, { in.width(), in.height() / 2 }), low_pass, 0);
-  convolve_downsample_y(view(filtered_x), brd, brd,
+  convolve_downsample_y(view(filtered_x),
     subimage_view(out, { 0, in.height() / 2 }, { in.width(), in.height() / 2 }), hi_pass, 0.5f);
 }
 
@@ -116,28 +110,27 @@ void wavelet_transform(int levels, const VI & in, const VO & out, const std::vec
 }
 
 // делает свертку входного изображения по строкам с заданным фильтром;
-// результат записывается в выходное изобрадение с отсутпом brd от границ;
 // в выходном изображении шагает на 2 пиксела по X;
 // shift - значение, вычитаемое из входных пикселов, чтобы принимать серый цвет в качестве 0 для высоких частот
 template <typename VI, typename VO>
-void convolve_upsample_x(const VI & in, int brdX, int brdY, const VO & out, const std::vector<float> & filter, float shift)
+void convolve_upsample_x(const VI & in, const VO & out, const std::vector<float> & filter, float shift)
 {
-  if (brdX < (int)filter.size() / 2)
-    throw std::runtime_error("too narrow border in convolve_upsample_x");
-  if (in.width() != out.width() / 2 - brdX)
-    throw std::runtime_error("half of output image width minus borders at both sides is not equal to input image width");
-  if (in.height() != out.height() - 2 * brdY)
-    throw std::runtime_error("output image height minus borders at both sides is not equal to input image height");
+  if (in.width() != out.width() / 2)
+    throw std::runtime_error("half of output image width is not equal to input image width");
+  if (in.height() != out.height())
+    throw std::runtime_error("output image heightis not equal to input image height");
 
+  auto step_back = (filter.size() - 1) / 2;
   for (int y = 0; y < in.height(); ++y)
   {
-    auto o = out.row_begin(y + brdY) + brdX;
+    auto o = out.row_begin(y);
+    auto o_end = out.row_end(y);
+    auto os = create_cycle_iterator(o, o_end, step_back > 0 ? o_end - step_back : o);
     auto i = in.row_begin(y);
-    auto iEnd = in.row_end(y);
-    for (; i < iEnd; ++i, o += 2)
+    for (; o < o_end; ++i, ++++o, ++++os)
     {
       auto inval = *i - rgb32f_pixel_t(shift, shift, shift);
-      auto oo = o - (filter.size() - 1) / 2;
+      auto oo = os;
       for (auto f : filter)
         *oo++ += f * inval;
     }
@@ -146,9 +139,9 @@ void convolve_upsample_x(const VI & in, int brdX, int brdY, const VO & out, cons
 
 // аналог для сертки по столбцам
 template <typename VI, typename VO>
-void convolve_upsample_y(const VI & in, int brdX, int brdY, const VO & out, const std::vector<float> & filter, float shift)
+void convolve_upsample_y(const VI & in, const VO & out, const std::vector<float> & filter, float shift)
 {
-  convolve_upsample_x(transposed_view(in), brdY, brdX, transposed_view(out), filter, shift);
+  convolve_upsample_x(transposed_view(in), transposed_view(out), filter, shift);
 }
 
 // один уровень обратного вейвлет разложения
@@ -161,24 +154,19 @@ void inverse_transform1(const VI & in, const VO & out, const std::vector<float> 
   auto half_height = out.height() / 2;
 
   // обратное преобразование по Y
-  int brd = std::max(low_pass.size(), hi_pass.size()) / 2;
-  rgb32f_image_t inverted_y(in.width(), in.height() + 2 * brd);
+  rgb32f_image_t inverted_y(in.width(), in.height());
   fill_pixels(view(inverted_y), rgb32f_pixel_t(0, 0, 0));
   convolve_upsample_y(subimage_view(in, { 0, 0 }, { in.width(), half_height }),
-    0, brd, view(inverted_y), low_pass, 0);
+    view(inverted_y), low_pass, 0);
   convolve_upsample_y(subimage_view(in, { 0, half_height }, { in.width(), half_height }),
-    0, brd, view(inverted_y), hi_pass, 0.5f);
+    view(inverted_y), hi_pass, 0.5f);
 
   // обратное преобразование по X
-  rgb32f_image_t inverted_x(in.width() + 2 * brd, in.height());
-  fill_pixels(view(inverted_x), rgb32f_pixel_t(0, 0, 0));
-  convolve_upsample_x(subimage_view(const_view(inverted_y), { 0, brd }, { half_width, in.height() }),
-    brd, 0, view(inverted_x), low_pass, 0);
-  convolve_upsample_x(subimage_view(const_view(inverted_y), { half_width, brd }, { half_width, in.height() }),
-    brd, 0, view(inverted_x), hi_pass, 0.5f);
-
-  // копирование результата без границ
-  copy_pixels(subimage_view(const_view(inverted_x), { brd, 0 }, out.dimensions()), out);
+  fill_pixels(out, rgb32f_pixel_t(0, 0, 0));
+  convolve_upsample_x(subimage_view(const_view(inverted_y), { 0, 0 }, { half_width, in.height() }),
+    out, low_pass, 0);
+  convolve_upsample_x(subimage_view(const_view(inverted_y), { half_width, 0 }, { half_width, in.height() }),
+    out, hi_pass, 0.5f);
 }
 
 // обратное вейвлет разложение с заданным числом уровней
