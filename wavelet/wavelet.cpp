@@ -191,12 +191,17 @@ void inverse_transform(int levels, const VI & in, const VO & out, const std::vec
   inverse_transform1(view(tmp), out, low_pass, hi_pass);
 }
 
-// демонстрация прямого и обратного вейвлет преобразований с записью результатов в файлы
+// демонстрация прямого и обратного вейвлет преобразований для ортогонального базиса с записью результатов в файлы
 template <typename V>
-void demo_transform(const V & img, const std::string & name, 
-  const std::vector<float> & low_pass_synthesis, const std::vector<float> & hi_pass_synthesis)
+void demo_orthogonal_transform(const V & img, const std::string & name, 
+  const std::vector<float> & low_pass_synthesis)
 {
-  // фильтры отличаются на множетель 2, чтобы низкие частоты прямого преобразования выглядели как усреднение
+  // высокочастотный фильтр получается из низкочастотного изменением порядка коэффициентов и знака у каждого второго из них
+  std::vector<float> hi_pass_synthesis(low_pass_synthesis.rbegin(), low_pass_synthesis.rend());
+  for (size_t i = 1; i < hi_pass_synthesis.size(); i += 2)
+    hi_pass_synthesis[i] = -hi_pass_synthesis[i];
+
+  // фильтры для анализа и ситнеза отличаются на множетель 2, чтобы низкие частоты прямого преобразования выглядели как усреднение
   auto low_pass_analysis = low_pass_synthesis;
   for (auto & v : low_pass_analysis)
     v /= 2;
@@ -220,15 +225,16 @@ void main()
   png_read_float_image("lena.png", img);
 
   // https://en.wikipedia.org/wiki/Daubechies_wavelet
-  demo_transform(const_view(img), "D2", { 1, 1 }, { 1, -1 }); //Haar
+  demo_orthogonal_transform(const_view(img), "D2", { 1, 1 }); //Haar
 
-  demo_transform(const_view(img), "D4", 
-    { 0.6830127f, 1.1830127f, 0.3169873f, -0.1830127f }, 
-    { -0.1830127f, -0.3169873f, 1.1830127f, -0.6830127f });
+  demo_orthogonal_transform(const_view(img), "D4",
+    { 0.6830127f, 1.1830127f, 0.3169873f, -0.1830127f });
 
-  demo_transform(const_view(img), "D6",
-    { 0.47046721f, 1.14111692f, 0.650365f, -0.19093442f, -0.12083221f, 0.0498175f },
-    { 0.0498175f, 0.12083221f, -0.19093442f, -0.650365f, 1.14111692f, -0.47046721f });
+  demo_orthogonal_transform(const_view(img), "D6",
+    { 0.47046721f, 1.14111692f, 0.650365f, -0.19093442f, -0.12083221f, 0.0498175f });
+
+  demo_orthogonal_transform(const_view(img), "D8",
+    { 0.32580343f, 1.01094572f, 0.89220014f, -0.03957503f, -0.26450717f, 0.0436163f, 0.0465036f, -0.01498699f });
 
   // LeGall - something wrong with hi-freqs restoration
 /*
