@@ -191,15 +191,38 @@ void inverse_transform(int levels, const VI & in, const VO & out, const std::vec
   inverse_transform1(view(tmp), out, low_pass, hi_pass);
 }
 
-// демонстрация прямого и обратного вейвлет преобразований для ортогонального базиса с записью результатов в файлы
+// демонстрация прямого и обратного вейвлет преобразований при заданных фильтрах с записью результатов в файлы
+template <typename V>
+void demo_transform(const V & img, const std::string & name,
+  const std::vector<float> & low_pass_analysis,
+  const std::vector<float> & hi_pass_analysis,
+  const std::vector<float> & low_pass_synthesis,
+  const std::vector<float> & hi_pass_synthesis)
+{
+  rgb32f_image_t transformed(img.dimensions());
+  wavelet_transform(3, img, view(transformed), low_pass_analysis, hi_pass_analysis);
+  png_write_float_view(("transformed-" + name + ".png").c_str(), const_view(transformed));
+
+  rgb32f_image_t restored(img.dimensions());
+  inverse_transform(3, const_view(transformed), view(restored), low_pass_synthesis, hi_pass_synthesis);
+  png_write_float_view(("restored-" + name + ".png").c_str(), const_view(restored));
+}
+
+// меняет знак у каждого второго элемента вектора, начиная с данного
+inline void negate_every_second(std::vector<float> & vec, size_t i)
+{
+  for (; i < vec.size(); i += 2)
+    vec[i] = -vec[i];
+}
+
+// для ортогонального базиса
 template <typename V>
 void demo_orthogonal_transform(const V & img, const std::string & name, 
   const std::vector<float> & low_pass_synthesis)
 {
   // высокочастотный фильтр получается из низкочастотного изменением порядка коэффициентов и знака у каждого второго из них
   std::vector<float> hi_pass_synthesis(low_pass_synthesis.rbegin(), low_pass_synthesis.rend());
-  for (size_t i = 1; i < hi_pass_synthesis.size(); i += 2)
-    hi_pass_synthesis[i] = -hi_pass_synthesis[i];
+  negate_every_second(hi_pass_synthesis, 1);
 
   // фильтры для анализа и синтеза отличаются на множитель 2, чтобы низкие частоты прямого преобразования выглядели как усреднение
   auto low_pass_analysis = low_pass_synthesis;
@@ -209,13 +232,30 @@ void demo_orthogonal_transform(const V & img, const std::string & name,
   for (auto & v : hi_pass_analysis)
     v /= 2;
 
-  rgb32f_image_t transformed(img.dimensions());
-  wavelet_transform(3, img, view(transformed), low_pass_analysis, hi_pass_analysis);
-  png_write_float_view(("transformed-" + name + ".png").c_str(), const_view(transformed));
+  demo_transform(img, name, low_pass_analysis, hi_pass_analysis, low_pass_synthesis, hi_pass_synthesis);
+}
 
-  rgb32f_image_t restored(img.dimensions());
-  inverse_transform(3, const_view(transformed), view(restored), low_pass_synthesis, hi_pass_synthesis);
-  png_write_float_view(("restored-" + name + ".png").c_str(), const_view(restored));
+// для биортогонального базиса
+template <typename V>
+void demo_biorthogonal_transform(const V & img, const std::string & name,
+  const std::vector<float> & low_pass_analysis,
+  const std::vector<float> & low_pass_synthesis)
+{
+  std::vector<float> hi_pass_analysis;
+  hi_pass_analysis.reserve(low_pass_synthesis.size() + 2);
+  hi_pass_analysis.push_back(0);
+  hi_pass_analysis.push_back(0);
+  hi_pass_analysis.insert(hi_pass_analysis.end(), low_pass_synthesis.begin(), low_pass_synthesis.end());
+  negate_every_second(hi_pass_analysis, 0);
+
+  std::vector<float> hi_pass_synthesis;
+  hi_pass_synthesis.reserve(low_pass_analysis.size() + 2);
+  hi_pass_synthesis.push_back(0);
+  hi_pass_synthesis.push_back(0);
+  hi_pass_synthesis.insert(hi_pass_synthesis.end(), low_pass_analysis.begin(), low_pass_analysis.end());
+  negate_every_second(hi_pass_synthesis, 1);
+
+  demo_transform(img, name, low_pass_analysis, hi_pass_analysis, low_pass_synthesis, hi_pass_synthesis);
 }
 
 void main()
@@ -236,11 +276,12 @@ void main()
   demo_orthogonal_transform(const_view(img), "D8",
     { 0.32580343f, 1.01094572f, 0.89220014f, -0.03957503f, -0.26450717f, 0.0436163f, 0.0465036f, -0.01498699f });
 
-  // LeGall - something wrong with hi-freqs restoration
-/*
-  wavelet_transform1(const_view(img), view(transformed), { -0.125f, 0.25f, 0.75f, 0.25f, -0.125f }, { -0.5f, 1.0f, -0.5f });
-  png_write_float_view("legall.png", const_view(transformed));
+  // https://en.wikipedia.org/wiki/Cohen-Daubechies-Feauveau_wavelet
+  demo_biorthogonal_transform(const_view(img), "CDF5", //LeGall 5/3
+    { -0.125f, 0.25f, 0.75f, 0.25f, -0.125f },
+    { 0.5f, 1.0f, 0.5f });
 
-  inverse_transform1(const_view(transformed), view(restored), { 0.5f, 1.0f, 0.5f }, { -0.125f, -0.25f, 0.75f, -0.25f, -0.125f });
-  png_write_float_view("restored-legall.png", const_view(restored));*/
+  demo_biorthogonal_transform(const_view(img), "CDF9", //9/7-CDF-wavelet
+    { 0.026748757411f, -0.016864118443f, -0.078223266529f, 0.266864118443f, 0.602949018236f, 0.266864118443f, -0.078223266529f, -0.016864118443f, 0.026748757411f },
+    { -0.091271763114f, -0.057543526229f, 0.591271763114f, 1.11508705f, 0.591271763114f, -0.057543526229f, -0.091271763114f });
 }
