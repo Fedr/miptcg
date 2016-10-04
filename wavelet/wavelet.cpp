@@ -1,4 +1,6 @@
-﻿#include <boost/gil/gil_all.hpp>
+﻿#include <iostream>
+
+#include <boost/gil/gil_all.hpp>
 #include <boost/gil/extension/io/png_io.hpp>
 using namespace boost::gil;
 
@@ -191,6 +193,24 @@ void inverse_transform(int levels, const VI & in, const VO & out, const std::vec
   inverse_transform1(view(tmp), out, low_pass, hi_pass);
 }
 
+// возращает среднеквадратическую разность пикселей между двумя изображениями
+template <typename V1, typename V2>
+double root_mean_square_diff(const V1 & img1, const V2 & img2)
+{
+  if (img1.dimensions() != img2.dimensions())
+    throw std::runtime_error("both images shall have the same dimensions in root_mean_square_diff");
+
+  double res = 0;
+  auto i2 = img2.begin();
+  for (const auto & p1 : img1)
+  {
+    const auto & p2 = *i2++;
+    auto d = p1 - p2;
+    res += d * d;
+  }
+  return sqrt(res / (img1.width() * img1.height()));
+}
+
 // демонстрация прямого и обратного вейвлет преобразований при заданных фильтрах с записью результатов в файлы
 template <typename V>
 void demo_transform(const V & img, const std::string & name,
@@ -206,6 +226,15 @@ void demo_transform(const V & img, const std::string & name,
   rgb32f_image_t restored(img.dimensions());
   inverse_transform(3, const_view(transformed), view(restored), low_pass_synthesis, hi_pass_synthesis);
   png_write_float_view(("restored-" + name + ".png").c_str(), const_view(restored));
+  std::cout << name << " root_mean_square_diff=" << root_mean_square_diff(img, const_view(restored)) << std::endl;
+
+  // обнуляем область выских частот по горизонтали и вертикали (правая-нижняя часть изображения)
+  // на трансформированном изображении и восстанавливаем снова
+  fill_pixels(subimage_view(view(transformed), { img.width() / 2, img.height() / 2 }, { img.width() / 2, img.height() / 2 }),
+    rgb32f_pixel_t(0.5f, 0.5f, 0.5f));
+  inverse_transform(3, const_view(transformed), view(restored), low_pass_synthesis, hi_pass_synthesis);
+  png_write_float_view(("no-hh-restored-" + name + ".png").c_str(), const_view(restored));
+  std::cout << name << "-no-HH root_mean_square_diff=" << root_mean_square_diff(img, const_view(restored)) << std::endl;
 }
 
 // меняет знак у каждого второго элемента вектора, начиная с данного
