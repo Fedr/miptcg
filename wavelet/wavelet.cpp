@@ -1,7 +1,10 @@
 ﻿#include <iostream>
 
 #include <boost/gil/gil_all.hpp>
+#pragma warning (push)
+#pragma warning (disable: 4244) // 'argument': conversion from '__int64' to 'png_uint_32', possible loss of data
 #include <boost/gil/extension/io/png_io.hpp>
+#pragma warning (pop)
 using namespace boost::gil;
 
 #include "..\gil_utils\color_arithm.h"
