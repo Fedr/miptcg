@@ -1,4 +1,5 @@
 ﻿#include <iostream>
+#include <omp.h>
 
 #include <boost/gil/gil_all.hpp>
 #pragma warning (push)
@@ -9,6 +10,9 @@ using namespace boost::gil;
 
 #include "..\gil_utils\color_arithm.h"
 #include "..\gil_utils\float_views_io.h"
+
+// количество уровней вейвлет-преобразования, >= 1
+const int TRANSFORM_LEVELS = 3;
 
 // итератор, подобный I, но который при достижении конца перескакивает на начало
 template <typename I>
@@ -50,6 +54,7 @@ void convolve_downsample_x(const VI & in, const VO & out, const std::vector<floa
     throw std::runtime_error("input image height is not equal to output image height");
 
   auto step_back = (filter.size() - 1) / 2;
+  #pragma omp parallel for
   for (int y = 0; y < out.height(); ++y)
   {
     auto i = in.row_begin(y);
@@ -126,6 +131,7 @@ void convolve_upsample_x(const VI & in, const VO & out, const std::vector<float>
     throw std::runtime_error("output image heightis not equal to input image height");
 
   auto step_back = (filter.size() - 1) / 2;
+  #pragma omp parallel for
   for (int y = 0; y < in.height(); ++y)
   {
     auto o = out.row_begin(y);
@@ -223,11 +229,11 @@ void demo_transform(const V & img, const std::string & name,
   const std::vector<float> & hi_pass_synthesis)
 {
   rgb32f_image_t transformed(img.dimensions());
-  wavelet_transform(3, img, view(transformed), low_pass_analysis, hi_pass_analysis);
+  wavelet_transform(TRANSFORM_LEVELS, img, view(transformed), low_pass_analysis, hi_pass_analysis);
   png_write_float_view(("transformed-" + name + ".png").c_str(), const_view(transformed));
 
   rgb32f_image_t restored(img.dimensions());
-  inverse_transform(3, const_view(transformed), view(restored), low_pass_synthesis, hi_pass_synthesis);
+  inverse_transform(TRANSFORM_LEVELS, const_view(transformed), view(restored), low_pass_synthesis, hi_pass_synthesis);
   png_write_float_view(("restored-" + name + ".png").c_str(), const_view(restored));
   std::cout << name << " root_mean_square_diff=" << root_mean_square_diff(img, const_view(restored)) << std::endl;
 
@@ -235,7 +241,7 @@ void demo_transform(const V & img, const std::string & name,
   // на трансформированном изображении и восстанавливаем снова
   fill_pixels(subimage_view(view(transformed), { img.width() / 2, img.height() / 2 }, { img.width() / 2, img.height() / 2 }),
     rgb32f_pixel_t(0.5f, 0.5f, 0.5f));
-  inverse_transform(3, const_view(transformed), view(restored), low_pass_synthesis, hi_pass_synthesis);
+  inverse_transform(TRANSFORM_LEVELS, const_view(transformed), view(restored), low_pass_synthesis, hi_pass_synthesis);
   png_write_float_view(("no-hh-restored-" + name + ".png").c_str(), const_view(restored));
   std::cout << name << "-no-HH root_mean_square_diff=" << root_mean_square_diff(img, const_view(restored)) << std::endl;
 }
